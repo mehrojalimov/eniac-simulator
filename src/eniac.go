@@ -172,10 +172,9 @@ func proccmd(cmd string) int {
 			fmt.Println("LED matrix support requires 4 accumulators")
 			break
 		}
-		ledacc[0], _ = strconv.Atoi(f[1])
-		ledacc[1], _ = strconv.Atoi(f[2])
-		ledacc[2], _ = strconv.Atoi(f[3])
-		ledacc[3], _ = strconv.Atoi(f[4])
+		if engout != nil {
+			fmt.Fprintf(engout, "L %s %s %s %s\n", f[1], f[2], f[3], f[4])
+		}
 	case "p":
 		if len(f) != 3 {
 			fmt.Println("Invalid jumper spec", cmd)
@@ -328,9 +327,6 @@ func proccmd(cmd string) int {
 	case "q":
 		if engineproc != nil {
 			engineshutdown()
-		}
-		if ledproc != nil {
-			ledproc.Kill()
 		}
 		return -1
 	case "r":
@@ -618,23 +614,19 @@ func main() {
 		fmt.Fprintf(os.Stderr, "Usage: %s [options] [configuration file]\n", os.Args[0])
 		flag.PrintDefaults()
 	}
-	usecontrol = flag.Bool("c", false, "use a portable control station connected to GPIO pins")
+	if runtime.GOARCH == "arm" {
+		usecontrol = flag.Bool("c", false, "use a portable control station connected to GPIO pins")
+	}
 	engcmd = flag.String("v", "", "use visualization program for display")
-	useled := flag.Bool("L", false, "use an external LED matrix driver")
-	useled2 := flag.Bool("LL", false, "use an extern LED with kernel driver")
 	flag.Parse()
-	if *usecontrol {
-		go ctlstation()
+	if runtime.GOARCH == "arm" {
+		if *usecontrol {
+			go ctlstation()
+		}
 	}
 	if *engcmd != "" {
 		// enginedisplay starts its own goroutine
 		enginedisplay(engcmd)
-	}
-	if *useled {
-		go leddisplay(1)
-	}
-	if *useled2 {
-		go leddisplay(2)
 	}
 
 	initbut = make(chan int)

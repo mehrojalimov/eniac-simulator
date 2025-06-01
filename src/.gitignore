@@ -1,6 +1,7 @@
 dodiffs
 eniac
 eniac.exe
+eniac.netbsd_amd64
 eniac.freebsd_amd64
 eniac.freebsd_i386
 eniac.linux_arm
@@ -8,3 +9,4 @@ eniac.linux_i386
 eniac.linux_amd64
 eniac.macos_amd64
 eniac.plan9_arm
+ledmat.bak
