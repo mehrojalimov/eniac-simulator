@@ -7,6 +7,9 @@ eniact5.o
 ledmat
 ledmat.o
 eniactk
+eniacrlfp.c
+enaicrlfp
+eniacrlfp.o
 irrtest.cpp
 irrtest2.cpp
 ledmat.bak
