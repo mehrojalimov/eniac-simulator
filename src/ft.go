@@ -16,12 +16,12 @@ type ft struct {
 	del              [8]int
 	sub              [12]int
 	tab              [104][14]int
-	arg              int
+	arg1s              int
+	arg10s		int
 	ring             int
-	add              bool
-	subtr            bool
-	argsetup         bool
-	gateh42, gatee42 bool
+	addff              bool
+	subff            bool
+	argff         bool
 	update           chan int
 	resp             chan int
 	whichrp          bool
@@ -38,18 +38,18 @@ func ftstat(unit int) (s string) {
 			s += "0"
 		}
 	}
-	s += fmt.Sprintf(" %d %d", ftable[unit].arg, ftable[unit].ring)
-	if ftable[unit].add {
+	s += fmt.Sprintf(" %d%d %d", ftable[unit].arg10s, ftable[unit].arg1s, ftable[unit].ring)
+	if ftable[unit].addff {
 		s += " 1"
 	} else {
 		s += " 0"
 	}
-	if ftable[unit].subtr {
+	if ftable[unit].subff {
 		s += " 1"
 	} else {
 		s += " 0"
 	}
-	if ftable[unit].argsetup {
+	if ftable[unit].argff {
 		s += " 1"
 	} else {
 		s += " 0"
@@ -66,7 +66,7 @@ func ftreset(unit int) {
 		f.inff1[i] = false
 		f.inff2[i] = false
 		f.opsw[i] = 0
-		f.rptsw[i] = 0
+		f.rptsw[i] = 1
 		f.argsw[i] = 0
 	}
 	f.pm1 = 0
@@ -83,13 +83,12 @@ func ftreset(unit int) {
 			f.tab[i][j] = 0
 		}
 	}
-	f.arg = 0
-	f.ring = 0
-	f.add = false
-	f.subtr = false
-	f.argsetup = false
-	f.gateh42 = false
-	f.gatee42 = false
+	f.arg10s = 0
+	f.arg1s = 0
+	f.ring = -3
+	f.addff = false
+	f.subff = false
+	f.argff = false
 	f.whichrp = false
 	f.px4119 = false
 	f.update <- 1
@@ -150,7 +149,7 @@ func ftctl(unit int, ch chan [2]string) {
 		case swval[0][:2] == "rp":
 			sw, _ := strconv.Atoi(swval[0][2:])
 			val, _ := strconv.Atoi(swval[1])
-			ftable[unit].rptsw[sw-1] = val - 1
+			ftable[unit].rptsw[sw-1] = val
 		case swval[0] == "mpm1":
 			switch swval[1][0] {
 			case 'P', 'p':
@@ -238,7 +237,7 @@ func ftctl(unit int, ch chan [2]string) {
 func addlookup(f *ft, c int) {
 	a := 0
 	b := 0
-	arg := f.arg
+	arg := 10 * f.arg10s + f.arg1s
 	if c&Ninep != 0 {
 		as := f.pm1 == 1 || f.pm1 == 2 && f.tab[arg][0] == 1
 		bs := f.pm2 == 1 || f.pm2 == 2 && f.tab[arg][13] == 1
@@ -366,7 +365,7 @@ func addlookup(f *ft, c int) {
 func subtrlookup(f *ft, c int) {
 	a := 0
 	b := 0
-	arg := f.arg
+	arg := 10 * f.arg10s + f.arg1s
 	if c&Ninep != 0 {
 		as := f.pm1 == 0 || f.pm1 == 2 && f.tab[arg][0] == 0
 		bs := f.pm2 == 0 || f.pm2 == 2 && f.tab[arg][13] == 0
@@ -489,48 +488,31 @@ func ftunit(unit int, cyctrunk chan pulse) {
 	var prog int
 
 	f := &ftable[unit]
+	f.ring = -3
 	f.update = make(chan int)
 	go ftunit2(f)
 	f.resp = make(chan int)
 	for {
 		p := <-cyctrunk
-		if f.px4119 {
-			if p.val&Cpp != 0 {
-				p.val |= Ninep
-			} else {
-				p.val &= ^Ninep
-			}
-		}
 		c := p.val
-		if f.gatee42 {
-			sw := f.opsw[prog]
-			if c&Onep != 0 && (sw == 1 || sw == 3 || sw == 6 || sw == 8) {
-				f.arg++
-			}
-			if c&Twop != 0 && (sw == 2 || sw == 3 || sw == 6 || sw == 7) {
-				f.arg++
-			}
-			if c&Fourp != 0 && (sw == 4 || sw == 5) {
-				f.arg++
-			}
-		}
-		if f.add {
-			if f.arg >= 0 && f.arg < 104 {
-				addlookup(f, c)
+		if f.px4119 {
+			/*
+			 * The drawing PX-4-119 shows the CPP line disconnected at
+			 * the FT, but this doesn't make any sense.  The FT can't operate
+			 * correctly without the CPP signal.  I'm assuming that the drawing
+			 * is mistaken and the CPP from the cycling unit is connected to
+			 * both the CPP and 9P terminals on the FT.
+			 */
+			if c&Cpp != 0 {
+				c |= Ninep
 			} else {
-				fmt.Println("Invalid function table argument", f.arg)
+				c &^= Ninep
 			}
-		}
-		if f.subtr {
-			if f.arg >= 0 && f.arg < 104 {
-				subtrlookup(f, c)
-			} else {
-				fmt.Println("Invalid function table argument", f.arg)
-			}
+			c &^= Tenp | Scg | Rp | Ccg
 		}
 		if c&Cpp != 0 {
 			switch f.ring {
-			case 0: // Stage -3
+			case -3:
 				for prog = 0; prog < 11 && !f.inff2[prog]; prog++ {
 				}
 				if prog >= 11 {
@@ -549,43 +531,95 @@ func ftunit(unit int, cyctrunk chan pulse) {
 					}
 				}
 				f.ring++ // Stage -2 begins
-				f.gateh42 = true
-			case 1:
+			case -2:
 				f.ring++ // Stage -1 begins
-				f.gateh42 = false
-				f.gatee42 = true
-			case 2:
+			case -1:
 				f.ring++ // Stage 0 begins
-				f.gatee42 = false
-				/*
-					if f.opsw[prog] < 5 {
-						f.add = true
-					} else {
-						f.subtr = true
-					}
-				*/
-			case 3: // Stage 0
-				f.ring++ // Stage 1 begins
+			case 0:
 				if f.opsw[prog] < 5 {
-					f.add = true
+					f.addff = true
 				} else {
-					f.subtr = true
+					f.subff = true
 				}
+				f.ring++ // Stage 1 begins
 			default: // Stages 1-9
-				if f.rptsw[prog] == f.ring-4 {
+				if f.rptsw[prog] == f.ring {
 					if f.jack[prog*2+6] != nil {
 						f.jack[prog*2+6] <- pulse{1, f.resp}
 						<-f.resp
 					}
-					f.arg = 0
-					f.add = false
-					f.subtr = false
+					f.arg10s = 0
+					f.arg1s = 0
+					f.addff = false
+					f.subff = false
 					f.inff2[prog] = false
-					f.argsetup = false
-					f.ring = 0
+					f.argff = false
+					f.ring = -3
 				} else {
 					f.ring++
 				}
+			}
+		}
+		/*
+		 * This is also true for all 1P, 2P, 2'P, and 4P pulses
+		 */
+		if c&Ninep != 0 || c&Onepp != 0 {
+			if f.addff {
+				arg := 10 * f.arg10s + f.arg1s
+				if arg >= 0 && arg < 104 {
+					addlookup(f, c)
+				} else {
+					fmt.Println("Invalid function table argument", arg)
+				}
+			}
+			if f.subff {
+				arg := 10 * f.arg10s + f.arg1s
+				if arg >= 0 && arg < 104 {
+					subtrlookup(f, c)
+				} else {
+					fmt.Println("Invalid function table argument", arg)
+				}
+			}
+		}
+		if c&Onep != 0 {
+			if f.ring == -1 {
+				sw := f.opsw[prog]
+				if sw == 1 || sw == 3 || sw == 6 || sw == 8 {
+					f.arg1s++
+					if f.arg1s == 10 {
+						f.arg10s++
+						f.arg1s = 0
+					}
+				}
+			}
+		}
+		if c&Twop != 0 {
+			if f.ring == -1 {
+				sw := f.opsw[prog]
+				if sw == 2 || sw == 4 || sw == 5 || sw == 7 {
+					f.arg1s++
+					if f.arg1s == 10 {
+						f.arg10s++
+						f.arg1s = 0
+					}
+				}
+			}
+		}
+		if c&Twopp != 0 {
+			if f.ring == -1 {
+				sw := f.opsw[prog]
+				if sw ==3 || sw == 4 || sw == 5 || sw == 6 {
+					f.arg1s++
+					if f.arg1s == 10 {
+						f.arg10s++
+						f.arg1s = 0
+					}
+				}
+			}
+		}
+		if c&Onepp != 0 {
+			if f.ring == -1 {
+				f.argff = true
 			}
 		}
 		if c&Ccg != 0 {
@@ -603,9 +637,6 @@ func ftunit(unit int, cyctrunk chan pulse) {
 			} else {
 				f.whichrp = true
 			}
-		}
-		if f.ring == 2 && c&Onepp != 0 {
-			f.argsetup = true
 		}
 		if p.resp != nil {
 			p.resp <- 1
@@ -675,12 +706,16 @@ func ftunit2(f *ft) {
 				p.resp <- 1
 			}
 		case arg := <-f.jack[0]:
-			if f.gateh42 {
+			if f.ring == -2 {
 				if arg.val&0x01 != 0 {
-					f.arg++
+					f.arg1s++
+					if f.arg1s == 10 {
+						f.arg10s++
+						f.arg1s = 0
+					}
 				}
 				if arg.val&0x02 != 0 {
-					f.arg += 10
+					f.arg10s++
 				}
 			}
 			if arg.resp != nil {
