@@ -315,6 +315,7 @@ stdinreader() {
 				ystart = 9790;
 				break;
 			}
+			val += 3;
 			ftringneon[unit]->setPosition(vector3df(xpos, 245, ystart + val * 18.5 * dir));
 		}
 		else if(sscanf(msg.c_str(), "ftad %d %d", &unit, &val) == 2) {

@@ -1,16 +1,9 @@
-#include <irrlicht.h>
-#include <iostream>
-#include <thread>
-#include <string>
-#include <math.h>
+#include <stdio.h>
+#include <string.h>
+#include <raylib.h>
+#include <pthread.h>
 
-using namespace irr;
-using namespace core;
-using namespace scene;
-using namespace video;
-using namespace io;
-using namespace gui;
-
+/*
 ICursorControl *curs;
 IVolumeLightSceneNode *adneon[20][11];
 IVolumeLightSceneNode *acneon[20][10];
@@ -21,17 +14,17 @@ IVolumeLightSceneNode *ftaddneon[3], *ftsubneon[3], *ftringneon[3];
 IVolumeLightSceneNode *consneon[20];
 IVolumeLightSceneNode *mulsneon, *mulr1neon, *mulr3neon;
 IVolumeLightSceneNode *dsqplneon, *dsqstat[30];
-ICameraSceneNode *camera1, *camera2;
+ICameraSceneNode *camera;
+*/
 int laccmpos[9] = { 7725, 8335, 9555, 10165, 10775, 11385, 11995, 12605, 13215 };
 int baccmpos[5] = { -2230, 210, 820, 1430, 2040 };
 int raccmpos[6] = { 13690, 13080, 12470, 11860, 8810, 8200 };
 
+#if 0
 void
-setcams(vector3df pos, double angle) {
-	camera1->setPosition(vector3df(pos.X - (100 * cos(angle)), 0, pos.Z + (100 * sin(angle))));
-	camera1->updateAbsolutePosition();
-	camera2->setPosition(vector3df(pos.X + (100 * cos(angle)), 0, pos.Z - (100 * sin(angle))));
-	camera2->updateAbsolutePosition();
+setcam(vector3df pos, double angle) {
+	camera->setPosition(vector3df(pos.X, 0, pos.Z));
+	camera->updateAbsolutePosition();
 }
 
 
@@ -55,27 +48,25 @@ public:
 				return false;
 			else if(event.KeyInput.Key == KEY_UP) {
 				campos += forward * 40;
-				setcams(campos, angle);
+				setcam(campos, angle);
 			}
 			else if(event.KeyInput.Key == KEY_DOWN) {
 				campos -= forward * 40;
-				setcams(campos, angle);
+				setcam(campos, angle);
 			}
 			else if(event.KeyInput.Key == KEY_LEFT) {
 				angle -= 0.015;
 				target = vector3df(20000.0 * sin(angle), 0.0, 20000.0 * cos(angle));
 				forward = (target - campos).normalize();
-				camera1->setTarget(target);
-				camera2->setTarget(target);
-				setcams(campos, angle);
+				camera->setTarget(target);
+				setcam(campos, angle);
 			}
 			else if(event.KeyInput.Key == KEY_RIGHT) {
 				angle += 0.015;
 				target = vector3df(20000.0 * sin(angle), 0.0, 20000.0 * cos(angle));
 				forward = (target - campos).normalize();
-				camera1->setTarget(target);
-				camera2->setTarget(target);
-				setcams(campos, angle);
+				camera->setTarget(target);
+				setcam(campos, angle);
 			}
 			else if(event.KeyInput.Char == 'Q')
 				exit(0);
@@ -175,7 +166,6 @@ stdinreader() {
 				ystart = 9790;
 				break;
 			}
-			val += 3;
 			ftringneon[unit]->setPosition(vector3df(xpos, 245, ystart + val * 18.5 * dir));
 		}
 		else if(sscanf(msg.c_str(), "ftad %d %d", &unit, &val) == 2) {
@@ -277,44 +267,33 @@ stdinreader() {
 		}
 	}
 }
+#endif
 
 int
 main() {
-	IrrlichtDevice *device;
-	IVideoDriver *driver;
-	ISceneManager *smgr;
-	IGUIEnvironment *guienv;
-	IAnimatedMesh *mesh;
-	IMeshSceneNode *node;
-	ITexture *texture;
-	ILightSceneNode *light[4];
-	MyReceiver receiver;
+	Model eniacmod;
+	Camera camera;
+	Vector3 position;
 	int i, j;
 
-	std::thread stdint(stdinreader);
+	InitWindow(1680, 1050, "3D ENIAC");
 
-	device = createDevice(video::EDT_OPENGL, dimension2d<u32>(1680,1050), 16,
-		false, false, false, &receiver);
-//	device = createDevice(video::EDT_SOFTWARE, dimension2d<u32>(1680,1050), 16,
-//		false, false, false, &receiver);
-	if(device == NULL) {
-		perror("create device");
-		exit(1);
-	}
-	device->setWindowCaption(L"3D ENIAC");
+	memset(&camera, 0, sizeof(Camera));
+	camera.position = (Vector3){ 0.0, 0.0, 3000.0 };
+	camera.target = (Vector3){ 0.0, 0.0, 20000.0 };
+	camera.up = (Vector3){ 0.0, 1.0, 0.0 };
+	camera.fovy = 45.0;
+	camera.projection = CAMERA_PERSPECTIVE;
 
-	driver = device->getVideoDriver();
-	smgr = device->getSceneManager();
-	guienv = device->getGUIEnvironment();
-	curs = device->getCursorControl();
-	curs->setVisible(false);
+puts("loading model");
+	/* eniacmod = LoadModel("obj/eniact.obj"); */
+	eniacmod = LoadModel("glb/eniact.obj.GLB");
+puts("model loaded");
 
-	mesh = smgr->getMesh("obj/eniact.obj");
-	if(mesh == NULL) {
-		perror("mesh");
-		device->drop();
-		exit(1);
-	}
+	position = (Vector3){ 0.0, 0.0, 0.0 };
+puts("position set");
+
+#if 0
 	node = smgr->addMeshSceneNode(mesh->getMesh(0));
 	if(node == NULL) {
 		perror("node");
@@ -324,16 +303,11 @@ main() {
 	node->setRotation(vector3df(-90, 180, 0));
 	node->setPosition(vector3df(-2300, -1600, 4000));
 //	node->setMaterialFlag(EMF_LIGHTING, false);
-	camera1 = smgr->addCameraSceneNode(0, vector3df(-100, 0, 1000), vector3df(0, 0, 20000));
-	camera1->setFOV(0.8);
-	camera1->bindTargetAndRotation(true);
-	camera1->setFarValue(20000.0);
-	camera1->setAspectRatio(16.0/9.0);
-	camera2 = smgr->addCameraSceneNode(0, vector3df(100, 0, 1000), vector3df(0, 0, 20000));
-	camera2->setFOV(0.8);
-	camera2->bindTargetAndRotation(true);
-	camera2->setFarValue(20000.0);
-	camera2->setAspectRatio(16.0/9.0);
+	camera = smgr->addCameraSceneNode(0, vector3df(0, 0, 1000), vector3df(0, 0, 20000));
+	camera->setFOV(0.8);
+	camera->bindTargetAndRotation(true);
+	camera->setFarValue(20000.0);
+	camera->setAspectRatio(16.0/9.0);
 	light[0] = smgr->addLightSceneNode(0, vector3df(-1300, 2000, 9000), SColorf(0.6, 0.6, 0.6), 10000.0);
 	light[0]->setLightType(ELT_POINT);
 	light[0]->setVisible(true);
@@ -451,20 +425,29 @@ main() {
 		dsqstat[i+20] = smgr->addVolumeLightSceneNode(0, -1, 32, 32, SColor(128, 255, 150, 0), SColor(128, 255, 150, 0),
 			vector3df(-2820, 165, 9010 + i * 45), vector3df(0, 0, 0), vector3df(8.0, 8.0, 8.0));
 	}
+#endif
 
-	std::cout << "ready\n" << std::flush;
+	puts("ready");
 
-	while(device->run()) {
+	while(!WindowShouldClose()) {
+		UpdateCamera(&camera, CAMERA_FIRST_PERSON);
+		BeginDrawing();
+		ClearBackground(CLITERAL(Color){105, 110, 130, 255});
+		BeginMode3D(camera);
+		DrawModel(eniacmod, position, 1.0, WHITE);
+		EndMode3D();
+		EndDrawing();
+
+#if 0
 		driver->beginScene(true, true, SColor(255, 105, 110, 130));
-		smgr->setActiveCamera(camera1);
-		driver->setViewPort(rect<s32>(20, -200, 820, 1050));
-		smgr->drawAll();
-		smgr->setActiveCamera(camera2);
-		driver->setViewPort(rect<s32>(860, -200, 1660, 1050));
+		smgr->setActiveCamera(camera);
+		driver->setViewPort(rect<s32>(20, -200, 1660, 1050));
 		smgr->drawAll();
 		guienv->drawAll();
 		driver->endScene();
 		device->yield();
+#endif
 	}
-	device->drop();
+	UnloadModel(eniacmod);
+	CloseWindow();
 }

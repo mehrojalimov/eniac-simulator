@@ -826,6 +826,7 @@ mainloop:
 		case "ftr":
 			unit, _ := strconv.Atoi(p[1])
 			ring, _ := strconv.Atoi(p[2])
+			ring += 3
 			neonplcl(gpipe, fmt.Sprintf(".ft%dr", unit+1), true, 308+ftuoff[unit]*642+20*ring, -25)
 		case "ftad":
 			unit, _ := strconv.Atoi(p[1])

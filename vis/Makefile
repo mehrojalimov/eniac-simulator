@@ -12,6 +12,18 @@ eniacfp: eniacfp.o
 eniacfp.o: eniacfp.cpp
 	g++ $(C++_FLAGS) -c eniacfp.cpp
 
+eniact5: eniact5.o
+	g++ $(C++_FLAGS) -o eniac5t eniac5t.o -lIrrlicht
+
+eniact5.o: eniact5.cpp
+	g++ $(C++_FLAGS) -I/usr/pkg/include -I../../../packages/tiltfive_sdk_1.4.1/Native -c eniact5.cpp
+
+eniacrlfp: eniacrlfp.o
+	cc -L/usr/pkg/lib -o eniacrlfp eniacrlfp.o -lraylib
+
+eniacrlfp.o: eniacrlfp.c
+	cc -I/usr/pkg/include -c eniacrlfp.c
+
 eniactk: eniactk.go
 	go build -o eniactk eniactk.go
 
