@@ -628,6 +628,9 @@ func main() {
 		// enginedisplay starts its own goroutine
 		enginedisplay(engcmd)
 	}
+	if runtime.GOARCH == "wasm" {
+		cmode = Add
+	}
 
 	initbut = make(chan int)
 	cycsw = make(chan [2]string)
