@@ -8,5 +8,7 @@ eniac.linux_arm
 eniac.linux_i386
 eniac.linux_amd64
 eniac.macos_amd64
+eniac.macos_arm64
 eniac.plan9_arm
+eniac.wasm
 ledmat.bak
