@@ -13,3 +13,4 @@ eniacrlfp.o
 irrtest.cpp
 irrtest2.cpp
 ledmat.bak
+COpenGLTexture.h

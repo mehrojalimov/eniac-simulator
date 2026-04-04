@@ -1,12 +1,11 @@
 #include <irrlicht.h>
 #include <iostream>
-#include <thread>
 #include <string>
 #include <math.h>
 #include <time.h>
+#include <pthread.h>
 #include <include/TiltFiveNative.h>
-#include "/home/stuart/packages/irrlicht-1.8.5/source/Irrlicht/COpenGLDriver.h"
-#include "/home/stuart/packages/irrlicht-1.8.5/source/Irrlicht/COpenGLTexture.h"
+#include "COpenGLTexture.h"
 
 using namespace irr;
 using namespace core;
@@ -18,7 +17,9 @@ using namespace gui;
 T5_Glasses glasses;
 T5_GraphicsContextGL graphctxt;
 double ipd;
+double tiltx, tilty, tiltz;
 
+ISceneManager *smgr;
 ICursorControl *curs;
 IVolumeLightSceneNode *adneon[20][11];
 IVolumeLightSceneNode *acneon[20][10];
@@ -90,6 +91,84 @@ initglasses() {
 	return glasses;
 }
 
+void *
+procwand(void *a) {
+	T5_Result r;
+	T5_WandStreamEvent event;
+	unsigned long long lasttime;
+
+	lasttime = 0LL;
+	while(1) {
+		r = t5ReadWandStreamForGlasses(glasses, &event, 100);
+		if(r == T5_TIMEOUT)
+			continue;
+		if(r != T5_SUCCESS) {
+			std::cerr << "Read wand failed\n";
+			continue;
+		}
+		switch(event.type) {
+		case kT5_WandStreamEventType_Connect:
+			std::cerr << "Wand connect\n";
+			break;
+		case kT5_WandStreamEventType_Disconnect:
+			std::cerr << "Wand disconnected\n";
+			break;
+		case kT5_WandStreamEventType_Desync:
+			std::cerr << "Wand desynchronized\n";
+			break;
+		case kT5_WandStreamEventType_Report:
+			if(event.report.analogValid) {
+				if(event.report.stick.y > 0.9) {
+					tiltz -= (event.report.timestampNanos - lasttime) * 0.000002;
+				}
+				else if(event.report.stick.y < -0.9) {
+					tiltz += (event.report.timestampNanos - lasttime) * 0.000002;
+				}
+				if(event.report.stick.x > 0.9) {
+					tiltx += (event.report.timestampNanos - lasttime) * 0.000002;
+				}
+				else if(event.report.stick.x < -0.9) {
+					tiltx -= (event.report.timestampNanos - lasttime) * 0.000002;
+				}
+			}
+			break;
+		default:
+			std::cerr << "Unknonwn wand event\n";
+			break;
+		}
+		lasttime = event.report.timestampNanos;
+	}
+	return NULL;
+}
+
+void
+initwand() {
+	T5_Result r;
+	T5_WandHandle hand[3];
+	T5_WandStreamConfig config;
+	unsigned char count;
+	pthread_t wtid;
+
+	count = 3;
+	r = t5ListWandsForGlasses(glasses, hand, &count);
+	if(r != T5_SUCCESS) {
+		std::cerr << "List wands failed\n";
+		return;
+	}
+	if(count == 0) {
+		std::cerr << "No wand\n";
+		return;
+	}
+	config.enabled = true;
+	r = t5ConfigureWandStreamForGlasses(glasses, &config);
+	if(r != T5_SUCCESS) {
+		std::cerr << "Configure wand failed\n";
+		return;
+	}
+	pthread_create(&wtid, NULL, procwand, NULL);
+	t5SendImpulse(glasses, hand[0], 0.7, 200);
+}
+
 int
 getpose(T5_FrameInfo *frameinfo) {
 	T5_Result r;
@@ -105,7 +184,8 @@ getpose(T5_FrameInfo *frameinfo) {
 
 	i = 0;
 	while(1) {
-		r = t5GetGlassesPose(glasses, kT5_GlassesPoseUsage_GlassesPresentation, &pose);
+		r = t5GetGlassesPose(glasses,
+			kT5_GlassesPoseUsage_GlassesPresentation, &pose);
 		if(!r)
 			break;
 		if(i >= 20) {
@@ -147,13 +227,15 @@ getpose(T5_FrameInfo *frameinfo) {
 	frameinfo->posRVC_GBD = rpos;
 
 	targgbd = rotation1 * quaternion(0.0, 0.0, -1.0, 0.0) * rotation2;
-	targmodel = vector3df(15000.0 * targgbd.X - 800, 15000.0 * targgbd.Z, 15000.0 * targgbd.Y);
+	targmodel = vector3df(12000.0 * targgbd.X - 600,
+		12000.0 * targgbd.Z, 12000.0 * targgbd.Y);
 	upvec = rotation1 * quaternion(0.0, 1.0, 0.0, 0.0) * rotation2;
-	c1pos = c2pos = vector3df(15000.0 * pose.posGLS_GBD.x - 800, 15000.0 * pose.posGLS_GBD.z - 1600,
-		15000.0 * (pose.posGLS_GBD.y + 0.6));
+	c1pos = c2pos = vector3df(12000.0 * pose.posGLS_GBD.x - 600,
+		12000.0 * pose.posGLS_GBD.z - 1600,
+		12000.0 * (pose.posGLS_GBD.y + 0.6));
 	targmodel += c1pos;
-	c1pos += vector3df(lrotpos.X, lrotpos.Z, lrotpos.Y);
-	c2pos += vector3df(rrotpos.X, rrotpos.Z, rrotpos.Y);
+	c1pos += vector3df(lrotpos.X + tiltx, lrotpos.Z + tiltz, lrotpos.Y);
+	c2pos += vector3df(rrotpos.X + tiltx, rrotpos.Z + tiltz, rrotpos.Y);
 	camera1->setPosition(c1pos);
 	camera1->updateAbsolutePosition();
 	camera1->setTarget(targmodel);
@@ -168,9 +250,11 @@ getpose(T5_FrameInfo *frameinfo) {
 
 void
 setcams(vector3df pos, double angle) {
-	camera1->setPosition(vector3df(pos.X - (30 * cos(angle)), 0, pos.Z + (30 * sin(angle))));
+	camera1->setPosition(vector3df(pos.X - (30 * cos(angle)), 0,
+		pos.Z + (30 * sin(angle))));
 	camera1->updateAbsolutePosition();
-	camera2->setPosition(vector3df(pos.X + (30 * cos(angle)), 0, pos.Z - (30 * sin(angle))));
+	camera2->setPosition(vector3df(pos.X + (30 * cos(angle)), 0,
+		pos.Z - (30 * sin(angle))));
 	camera2->updateAbsolutePosition();
 }
 
@@ -203,7 +287,8 @@ public:
 			}
 			else if(event.KeyInput.Key == KEY_LEFT) {
 				angle -= 0.015;
-				target = vector3df(20000.0 * sin(angle), 0.0, 20000.0 * cos(angle));
+				target = vector3df(20000.0 * sin(angle), 0.0,
+					20000.0 * cos(angle));
 				forward = (target - campos).normalize();
 				camera1->setTarget(target);
 				camera2->setTarget(target);
@@ -211,7 +296,8 @@ public:
 			}
 			else if(event.KeyInput.Key == KEY_RIGHT) {
 				angle += 0.015;
-				target = vector3df(20000.0 * sin(angle), 0.0, 20000.0 * cos(angle));
+				target = vector3df(20000.0 * sin(angle), 0.0,
+					20000.0 * cos(angle));
 				forward = (target - campos).normalize();
 				camera1->setTarget(target);
 				camera2->setTarget(target);
@@ -224,8 +310,25 @@ public:
 	}
 };
 
+IVolumeLightSceneNode *
+mkneon(double x, double y, double z) {
+	return smgr->addVolumeLightSceneNode(0, -1, 32, 32,
+		SColor(128, 255, 150, 0), SColor(128, 255, 150, 0),
+		vector3df(x, y, z), vector3df(0.0, 0.0, 0.0), vector3df(8.0, 8.0, 8.0));
+}
+
 void
-stdinreader() {
+mvneon(IVolumeLightSceneNode *neon, double x, double y, double z) {
+	neon->setPosition(vector3df(x, y, z));
+}
+
+void
+mvdsqstat(int which, char dstat[], double x, double y, double z) {
+	mvneon(dsqstat[which], x + 100 * (dstat[which] - '0'), y, z);
+}
+
+void *
+stdinreader(void *a) {
 	std::string msg;
 	int unit, digit, val;
 	int ms, mr1, mr3;
@@ -236,44 +339,52 @@ stdinreader() {
 		std::getline(std::cin, msg);
 		if(sscanf(msg.c_str(), "ad %d %d %d", &unit, &digit, &val) == 3) {
 			if(unit < 9)
-				adneon[unit][digit]->setPosition(vector3df(-2690, 390 + val * 35, laccmpos[unit] + 47 * digit));
+				mvneon(adneon[unit][digit], -2690, 390 + val * 35, 
+					laccmpos[unit] + 47 * digit);
 			else if(unit < 14)
-				adneon[unit][digit]->setPosition(vector3df(baccmpos[unit-9] + 47 * digit, 390 + val * 35, 14150));
+				mvneon(adneon[unit][digit], baccmpos[unit-9] + 47 * digit,
+					390 + val * 35, 14150);
 			else
-				adneon[unit][digit]->setPosition(vector3df(2972, 390 + val * 35, raccmpos[unit-14] - 47 * digit));
+				mvneon(adneon[unit][digit], 2972, 390 + val * 35,
+					raccmpos[unit-14] - 47 * digit);
 		}
 		else if(sscanf(msg.c_str(), "ac %d %d %d", &unit, &digit, &val) == 3) {
 			if(unit < 9)
-				acneon[unit][digit]->setPosition(vector3df(-2690, -400 + val * 627, laccmpos[unit] + 47 * digit));
+				mvneon(acneon[unit][digit], -2690, -400 + val * 627,
+					laccmpos[unit] + 47 * digit);
 			else if(unit < 14)
-				acneon[unit][digit]->setPosition(vector3df(baccmpos[unit-9] + 47 * digit, -400 + val * 627, 14150));
+				mvneon(acneon[unit][digit], baccmpos[unit-9] + 47 * digit,
+					-400 + val * 627, 14150);
 			else
-				acneon[unit][digit]->setPosition(vector3df(2972, -400 + val * 627, raccmpos[unit-14] - 47 * digit));
+				mvneon(acneon[unit][digit], 2972, -400 + val * 627,
+					raccmpos[unit-14] - 47 * digit);
 		}
 		else if(sscanf(msg.c_str(), "cy %d", &val) == 1) {
 			val &= ~1;
-			cycneon->setPosition(vector3df(-2645, 300, 4732 + 9.6 * val));
+			mvneon(cycneon, -2645, 300, 4732 + 9.6 * val);
 			if(val <= 20)
-				cycneon2->setPosition(vector3df(-2645, 245, 4866));
+				mvneon(cycneon2, -2645, 245, 4866);
 			else if(val <= 36)
-				cycneon2->setPosition(vector3df(-2645, 245, 4965));
+				mvneon(cycneon2, -2645, 245, 4965);
 			else
-				cycneon2->setPosition(vector3df(-2800, 245, 4866));
+				mvneon(cycneon2, -2800, 245, 4866);
 		}
 		else if(sscanf(msg.c_str(), "mpd %d %d", &digit, &val) == 2) {
 			if(digit < 10) {
-				mpdneon[digit]->setPosition(vector3df(-2745, 475 + 20 * val, 5368 + 40 * digit));
+				mvneon(mpdneon[digit], -2745, 475 + 20 * val, 5368 + 40 * digit);
 			}
 			else {
-				mpdneon[digit]->setPosition(vector3df(-2745, 475 + 20 * val, 5970 + 40 * (digit - 10)));
+				mvneon(mpdneon[digit], -2745, 475 + 20 * val,
+					5970 + 40 * (digit - 10));
 			}
 		}
 		else if(sscanf(msg.c_str(), "mps %d %d", &digit, &val) == 2) {
 			if(digit < 5) {
-				mpsneon[digit]->setPosition(vector3df(-2745, 80 + 20 * val, 5367 + 75 * digit));
+				mvneon(mpsneon[digit], -2745, 80 + 20 * val, 5367 + 75 * digit);
 			}
 			else {
-				mpsneon[digit]->setPosition(vector3df(-2745, 80 + 20 * val, 5973 + 75 * (digit - 5)));
+				mvneon(mpsneon[digit], -2745, 80 + 20 * val,
+					5973 + 75 * (digit - 5));
 			}
 		}
 		else if(sscanf(msg.c_str(), "ftar %d %d", &unit, &val) == 2) {
@@ -294,8 +405,9 @@ stdinreader() {
 				ystart = 10010;
 				break;
 			}
-			ftoneneon[unit]->setPosition(vector3df(xpos, 300, ystart + (val / 10) * 19.2 * dir));
-			fttenneon[unit]->setPosition(vector3df(xpos, 300, ystart + (val % 10) * 19.2 * dir + 250 * dir));
+			mvneon(ftoneneon[unit], xpos, 300, ystart + (val / 10) * 19.2 * dir);
+			mvneon(fttenneon[unit], xpos, 300,
+				ystart + (val % 10) * 19.2 * dir + 250 * dir);
 		}
 		else if(sscanf(msg.c_str(), "ftr %d %d", &unit, &val) == 2) {
 			switch(unit) {
@@ -316,7 +428,7 @@ stdinreader() {
 				break;
 			}
 			val += 3;
-			ftringneon[unit]->setPosition(vector3df(xpos, 245, ystart + val * 18.5 * dir));
+			mvneon(ftringneon[unit], xpos, 245, ystart + val * 18.5 * dir);
 		}
 		else if(sscanf(msg.c_str(), "ftad %d %d", &unit, &val) == 2) {
 			switch(unit) {
@@ -333,7 +445,7 @@ stdinreader() {
 				ystart = 9918;
 				break;
 			}
-			ftaddneon[unit]->setPosition(vector3df(xpos, 245, ystart));
+			mvneon(ftaddneon[unit], xpos, 245, ystart);
 		}
 		else if(sscanf(msg.c_str(), "ftsu %d %d", &unit, &val) == 2) {
 			switch(unit) {
@@ -350,7 +462,7 @@ stdinreader() {
 				ystart = 9890;
 				break;
 			}
-			ftsubneon[unit]->setPosition(vector3df(xpos, 245, ystart));
+			mvneon(ftsubneon[unit], xpos, 245, ystart);
 		}
 		else if(sscanf(msg.c_str(), "ftse %d %d", &unit, &val) == 2) {
 			switch(unit) {
@@ -367,54 +479,127 @@ stdinreader() {
 				ystart = 10010;
 				break;
 			}
-			ftsubneon[unit]->setPosition(vector3df(xpos, 245, ystart));
+			mvneon(ftsubneon[unit], xpos, 245, ystart);
 		}
 		else if(sscanf(msg.c_str(), "ct %d %d", &digit, &val) == 2) {
 			if(digit < 10) {
-				consneon[digit]->setPosition(vector3df(3095 - 100 * val, 660, 7570 - 49 * (digit - 1)));
+				mvneon(consneon[digit], 3095 - 100 * val, 660,
+					7570 - 49 * (digit - 1));
 			}
 			else if(digit < 20) {
-				consneon[digit]->setPosition(vector3df(3095 - 100 * val, 204, 7570 - 49 * (digit - 11)));
+				mvneon(consneon[digit], 3095 - 100 * val, 204,
+					7570 - 49 * (digit - 11));
 			}
 		}
 		else if(sscanf(msg.c_str(), "m %d %*s %d %d", &ms, &mr1, &mr3) == 3) {
-			mulsneon->setPosition(vector3df(-910 + 20 * ms, 225, 14090));
-			mulr1neon->setPosition(vector3df(-1400, 230, 14190 - mr1 * 100));
-			mulr3neon->setPosition(vector3df(-180, 230, 14190 - mr1 * 100));
+			mvneon(mulsneon,-910 + 20 * ms, 225, 14090);
+			mvneon(mulr1neon, -1400, 230, 14190 - mr1 * 100);
+			mvneon(mulr3neon, -180, 230, 14190 - mr1 * 100);
 		}
 		else if(sscanf(msg.c_str(), "d %d %*d %*s %s", &val, dstat) == 2) {
-			dsqplneon->setPosition(vector3df(-2720, 190 - val * 20, 8970));
-			dsqstat[0]->setPosition(vector3df(-2720 + 100 * (dstat[0] - '0'), 370, 9080));
-			dsqstat[1]->setPosition(vector3df(-2720 + 100 * (dstat[1] - '0'), 370, 9101));
-			dsqstat[2]->setPosition(vector3df(-2720 + 100 * (dstat[2] - '0'), 370, 9122));
-			dsqstat[3]->setPosition(vector3df(-2720 + 100 * (dstat[3] - '0'), 370, 9143));
-			dsqstat[4]->setPosition(vector3df(-2720 + 100 * (dstat[4] - '0'), 370, 9164));
-			dsqstat[5]->setPosition(vector3df(-2720 + 100 * (dstat[5] - '0'), 370, 9185));
-			dsqstat[6]->setPosition(vector3df(-2720 + 100 * (dstat[6] - '0'), 370, 9206));
-			dsqstat[7]->setPosition(vector3df(-2720 + 100 * (dstat[7] - '0'), 370, 9227));
-			dsqstat[8]->setPosition(vector3df(-2720 + 100 * (dstat[9] - '0'), 370, 9238));
-			dsqstat[9]->setPosition(vector3df(-2720 + 100 * (dstat[8] - '0'), 370, 9379));
-			dsqstat[10]->setPosition(vector3df(-2820 + 100 * (dstat[10] - '0'), 190, 9010));
-			dsqstat[11]->setPosition(vector3df(-2820 + 100 * (dstat[11] - '0'), 190, 9055));
-			dsqstat[12]->setPosition(vector3df(-2820 + 100 * (dstat[12] - '0'), 190, 9100));
-			dsqstat[13]->setPosition(vector3df(-2820 + 100 * (dstat[13] - '0'), 190, 9145));
-			dsqstat[14]->setPosition(vector3df(-2820 + 100 * (dstat[14] - '0'), 190, 9190));
-			dsqstat[15]->setPosition(vector3df(-2820 + 100 * (dstat[15] - '0'), 190, 9235));
-			dsqstat[16]->setPosition(vector3df(-2820 + 100 * (dstat[16] - '0'), 190, 9280));
-			dsqstat[17]->setPosition(vector3df(-2820 + 100 * (dstat[17] - '0'), 190, 9325));
-			dsqstat[18]->setPosition(vector3df(-2820 + 100 * (dstat[27] - '0'), 190, 9370));
-			dsqstat[19]->setPosition(vector3df(-2820 + 100 * (dstat[29] - '0'), 190, 9415));
-			dsqstat[20]->setPosition(vector3df(-2820 + 100 * (dstat[18] - '0'), 165, 9010));
-			dsqstat[21]->setPosition(vector3df(-2820 + 100 * (dstat[19] - '0'), 165, 9055));
-			dsqstat[22]->setPosition(vector3df(-2820 + 100 * (dstat[20] - '0'), 165, 9100));
-			dsqstat[23]->setPosition(vector3df(-2820 + 100 * (dstat[21] - '0'), 165, 9145));
-			dsqstat[24]->setPosition(vector3df(-2820 + 100 * (dstat[22] - '0'), 165, 9190));
-			dsqstat[25]->setPosition(vector3df(-2820 + 100 * (dstat[23] - '0'), 165, 9235));
-			dsqstat[26]->setPosition(vector3df(-2820 + 100 * (dstat[24] - '0'), 165, 9280));
-			dsqstat[27]->setPosition(vector3df(-2820 + 100 * (dstat[25] - '0'), 165, 9325));
-			dsqstat[28]->setPosition(vector3df(-2820 + 100 * (dstat[26] - '0'), 165, 9370));
-			dsqstat[29]->setPosition(vector3df(-2820 + 100 * (dstat[28] - '0'), 165, 9415));
+			mvneon(dsqplneon, -2720, 190 - val * 20, 8970);
+			mvdsqstat(0, dstat, -2720, 370, 9080);
+			mvdsqstat(1, dstat, -2720, 370, 9101);
+			mvdsqstat(2, dstat, -2720, 370, 9122);
+			mvdsqstat(3, dstat, -2720, 370, 9143);
+			mvdsqstat(4, dstat, -2720, 370, 9164);
+			mvdsqstat(5, dstat, -2720, 370, 9185);
+			mvdsqstat(6, dstat, -2720, 370, 9206);
+			mvdsqstat(7, dstat, -2720, 370, 9227);
+			mvdsqstat(8, dstat, -2720, 370, 9238);
+			mvdsqstat(9, dstat, -2720, 370, 9379);
+			mvdsqstat(10, dstat, -2820, 190, 9010);
+			mvdsqstat(11, dstat, -2820, 190, 9055);
+			mvdsqstat(12, dstat, -2820, 190, 9100);
+			mvdsqstat(13, dstat, -2820, 190, 9145);
+			mvdsqstat(14, dstat, -2820, 190, 9190);
+			mvdsqstat(15, dstat, -2820, 190, 9235);
+			mvdsqstat(16, dstat, -2820, 190, 9280);
+			mvdsqstat(17, dstat, -2820, 190, 9325);
+			mvdsqstat(18, dstat, -2820, 190, 9370);
+			mvdsqstat(19, dstat, -2820, 190, 9415);
+			mvdsqstat(20, dstat, -2820, 165, 9010);
+			mvdsqstat(21, dstat, -2820, 165, 9055);
+			mvdsqstat(22, dstat, -2820, 165, 9100);
+			mvdsqstat(23, dstat, -2820, 165, 9145);
+			mvdsqstat(24, dstat, -2820, 165, 9190);
+			mvdsqstat(25, dstat, -2820, 165, 9235);
+			mvdsqstat(26, dstat, -2820, 165, 9280);
+			mvdsqstat(27, dstat, -2820, 165, 9325);
+			mvdsqstat(28, dstat, -2820, 165, 9370);
+			mvdsqstat(29, dstat, -2820, 165, 9415);
 		}
+	}
+}
+
+void
+makeneons(void) {
+	int i, j;
+
+	for(i = 0; i < 9; i++) {
+		for(j = 0; j < 11; j++) {
+			adneon[i][j] = mkneon(-2690, 390, laccmpos[i] + 47 * j);
+		}
+		for(j = 1; j <= 10; j++) {
+			acneon[i][j] = mkneon(-2690, -400, laccmpos[i] + 47 * j);
+		}
+	}
+	for(i = 0; i < 5; i++) {
+		for(j = 0; j < 11; j++) {
+			adneon[i+9][j] = mkneon(baccmpos[i] + 47 * j, 390, 14150);
+		}
+		for(j = 1; j <= 10; j++) {
+			acneon[i+9][j] = mkneon(baccmpos[i] + 47 * j, -400, 14150);
+		}
+	}
+	for(i = 0; i < 6; i++) {
+		for(j = 0; j < 11; j++) {
+			adneon[i+14][j] = mkneon(2972, 390, raccmpos[i] - 47 * j);
+		}
+		for(j = 1; j <= 10; j++) {
+			acneon[i+14][j] = mkneon(2972, -400, raccmpos[i] - 47 * j);
+		}
+	}
+	cycneon = mkneon(-2645, 280, 4732);
+	cycneon2 = mkneon(-2645, 200, 4866);
+	for(i = 0; i < 5; i++) {
+		mpsneon[i] = mkneon(-2745, 80, 5367 + 75 * i);
+		mpsneon[i+5] = mkneon(-2745, 80, 5973 + 75 * i);
+	}
+	for(i = 0; i < 10; i++) {
+		mpdneon[i] = mkneon(-2745, 475, 5368 + 40 * i);
+		mpdneon[i+10] = mkneon(-2745, 475, 5970 + 40 * i);
+	}
+	ftoneneon[0] = mkneon(-2645, 300, 6520);
+	fttenneon[0] = mkneon(-2645, 300, 6770);
+	ftsetneon[0] = mkneon(-2745, 245, 6520);
+	ftaddneon[0] = mkneon(-2745, 245, 6612);
+	ftsubneon[0] = mkneon(-2745, 245, 6640);
+	ftringneon[0] = mkneon(-2645, 245, 6737);
+	ftoneneon[1] = mkneon(2922, 300, 11230);
+	fttenneon[1] = mkneon(2922, 300, 10980);
+	ftsetneon[1] = mkneon(3022, 245, 11230);
+	ftaddneon[1] = mkneon(3022, 245, 11138);
+	ftsubneon[1] = mkneon(3022, 245, 11110);
+	ftringneon[1] = mkneon(2922, 245, 11010);
+	ftoneneon[2] = mkneon(2922, 300, 10010);
+	fttenneon[2] = mkneon(2922, 300, 9760);
+	ftsetneon[2] = mkneon(3022, 245, 10010);
+	ftaddneon[2] = mkneon(3022, 245, 9918);
+	ftsubneon[2] = mkneon(3022, 245, 9890);
+	ftringneon[2] = mkneon(2922, 245, 9790);
+	for(i = 0; i < 10; i++) {
+		consneon[i] = mkneon(3095, 660, 7570 - 49 * i);
+		consneon[i+10] = mkneon(3095, 204, 7570 - 49 * i);
+	}
+	mulsneon = mkneon(-910, 225, 14090);
+	mulr1neon = mkneon(-1400, 230, 14190);
+	mulr3neon = mkneon(-180, 230, 14190);
+	dsqplneon = mkneon(-2720, 190, 8970);
+	for(i = 0; i < 10; i++) {
+		dsqstat[i] = mkneon(-2745, 370, 9080 + i * 21);
+		dsqstat[i+10] = mkneon(-2820, 190, 9010 + i * 45);
+		dsqstat[i+20] = mkneon(-2820, 165, 9010 + i * 45);
 	}
 }
 
@@ -422,7 +607,6 @@ int
 main() {
 	IrrlichtDevice *device;
 	IVideoDriver *driver;
-	ISceneManager *smgr;
 	IGUIEnvironment *guienv;
 	IAnimatedMesh *mesh;
 	IMeshSceneNode *node;
@@ -435,14 +619,12 @@ main() {
 	T5_Result r;
 	intptr_t lefttex, righttex;
 	vector3df targ;
-	int texarray[2];
+	pthread_t tid;
 
-	std::thread stdint(stdinreader);
+	pthread_create(&tid, NULL, stdinreader, NULL);
 
 	device = createDevice(video::EDT_OPENGL, dimension2d<u32>(1680,1050), 16,
 		false, false, false, &receiver);
-//	device = createDevice(video::EDT_SOFTWARE, dimension2d<u32>(1680,1050), 16,
-//		false, false, false, &receiver);
 	if(device == NULL) {
 		perror("create device");
 		exit(1);
@@ -469,151 +651,53 @@ main() {
 	}
 	node->setRotation(vector3df(-90, 180, 0));
 	node->setPosition(vector3df(-2300, -1600, 4000));
-//	node->setMaterialFlag(EMF_LIGHTING, false);
-	camera1 = smgr->addCameraSceneNode(0, vector3df(-50, 0, 1000), vector3df(0, 0, 9800));
+	camera1 = smgr->addCameraSceneNode(0, vector3df(-50, 0, 1000),
+		vector3df(0, 0, 9800));
 	camera1->setFOV(1.0);
 	camera1->bindTargetAndRotation(true);
 
 	camera1->setFarValue(50000.0);
 	camera1->setNearValue(1000.0);
 	camera1->setAspectRatio(16.0/9.0);
-	camera2 = smgr->addCameraSceneNode(0, vector3df(50, 0, 1000), vector3df(0, 0, 9800));
+	camera2 = smgr->addCameraSceneNode(0, vector3df(50, 0, 1000),
+		vector3df(0, 0, 9800));
 	camera2->setFOV(1.0);
 	camera2->bindTargetAndRotation(true);
 	camera2->setFarValue(50000.0);
 	camera2->setNearValue(1000.0);
 	camera2->setAspectRatio(16.0/9.0);
-	light[0] = smgr->addLightSceneNode(0, vector3df(-1300, 2000, 9000), SColorf(0.6, 0.6, 0.6), 10000.0);
+	light[0] = smgr->addLightSceneNode(0, vector3df(-1300, 2000, 9000),
+		SColorf(0.6, 0.6, 0.6), 10000.0);
 	light[0]->setLightType(ELT_POINT);
 	light[0]->setVisible(true);
-	light[1] = smgr->addLightSceneNode(0, vector3df(-1300, 2000, 3000), SColorf(0.6, 0.6, 0.6), 10000.0);
+	light[1] = smgr->addLightSceneNode(0, vector3df(-1300, 2000, 3000),
+		SColorf(0.6, 0.6, 0.6), 10000.0);
 	light[1]->setLightType(ELT_POINT);
 	light[1]->setVisible(true);
-	light[2] = smgr->addLightSceneNode(0, vector3df(1300, 2000, 9000), SColorf(0.6, 0.6, 0.6), 10000.0);
+	light[2] = smgr->addLightSceneNode(0, vector3df(1300, 2000, 9000),
+		SColorf(0.6, 0.6, 0.6), 10000.0);
 	light[2]->setLightType(ELT_POINT);
 	light[2]->setVisible(true);
-	light[3] = smgr->addLightSceneNode(0, vector3df(1300, 2000, 3000), SColorf(0.6, 0.6, 0.6), 10000.0);
+	light[3] = smgr->addLightSceneNode(0, vector3df(1300, 2000, 3000),
+		SColorf(0.6, 0.6, 0.6), 10000.0);
 	light[3]->setLightType(ELT_POINT);
 	light[3]->setVisible(true);
 
-	for(i = 0; i < 9; i++) {
-		for(j = 0; j < 11; j++) {
-			adneon[i][j] = smgr->addVolumeLightSceneNode(0, -1, 32, 32, SColor(128, 255, 150, 0), SColor(128, 255, 150, 0),
-				vector3df(-2690, 390, laccmpos[i] + 47 * j), vector3df(0, 0, 0), vector3df(8.0, 8.0, 8.0));
-		}
-		for(j = 1; j <= 10; j++) {
-			acneon[i][j] = smgr->addVolumeLightSceneNode(0, -1, 32, 32, SColor(128, 255, 150, 0), SColor(128, 255, 150, 0),
-				vector3df(-2690, -400, laccmpos[i] + 47 * j), vector3df(0, 0, 0), vector3df(8.0, 8.0, 8.0));
-		}
-	}
-	for(i = 0; i < 5; i++) {
-		for(j = 0; j < 11; j++) {
-			adneon[i+9][j] = smgr->addVolumeLightSceneNode(0, -1, 32, 32, SColor(128, 255, 150, 0), SColor(128, 255, 150, 0),
-				vector3df(baccmpos[i] + 47 * j, 390, 14150), vector3df(0, 0, 0), vector3df(8.0, 8.0, 8.0));
-		}
-		for(j = 1; j <= 10; j++) {
-			acneon[i+9][j] = smgr->addVolumeLightSceneNode(0, -1, 32, 32, SColor(128, 255, 150, 0), SColor(128, 255, 150, 0),
-				vector3df(baccmpos[i] + 47 * j, -400, 14150), vector3df(0, 0, 0), vector3df(8.0, 8.0, 8.0));
-		}
-	}
-	for(i = 0; i < 6; i++) {
-		for(j = 0; j < 11; j++) {
-			adneon[i+14][j] = smgr->addVolumeLightSceneNode(0, -1, 32, 32, SColor(128, 255, 150, 0), SColor(128, 255, 150, 0),
-				vector3df(2972, 390, raccmpos[i] - 47 * j), vector3df(0, 0, 0), vector3df(8.0, 8.0, 8.0));
-		}
-		for(j = 1; j <= 10; j++) {
-			acneon[i+14][j] = smgr->addVolumeLightSceneNode(0, -1, 32, 32, SColor(128, 255, 150, 0), SColor(128, 255, 150, 0),
-				vector3df(2972, -400, raccmpos[i] - 47 * j), vector3df(0, 0, 0), vector3df(8.0, 8.0, 8.0));
-		}
-	}
-	cycneon = smgr->addVolumeLightSceneNode(0, -1, 32, 32, SColor(128, 255, 150, 0), SColor(128, 255, 150, 0),
-		vector3df(-2645, 280, 4732), vector3df(0, 0, 0), vector3df(8.0, 8.0, 8.0));
-	cycneon2 = smgr->addVolumeLightSceneNode(0, -1, 32, 32, SColor(128, 255, 150, 0), SColor(128, 255, 150, 0),
-		vector3df(-2645, 200, 4866), vector3df(0, 0, 0), vector3df(8.0, 8.0, 8.0));
-	for(i = 0; i < 5; i++) {
-		mpsneon[i] = smgr->addVolumeLightSceneNode(0, -1, 32, 32, SColor(128, 255, 150, 0), SColor(128, 255, 150, 0),
-			vector3df(-2745, 80, 5367 + 75 * i), vector3df(0, 0, 0), vector3df(8.0, 8.0, 8.0));
-		mpsneon[i+5] = smgr->addVolumeLightSceneNode(0, -1, 32, 32, SColor(128, 255, 150, 0), SColor(128, 255, 150, 0),
-			vector3df(-2745, 80, 5973 + 75 * i), vector3df(0, 0, 0), vector3df(8.0, 8.0, 8.0));
-	}
-	for(i = 0; i < 10; i++) {
-		mpdneon[i] = smgr->addVolumeLightSceneNode(0, -1, 32, 32, SColor(128, 255, 150, 0), SColor(128, 255, 150, 0),
-			vector3df(-2745, 475, 5368 + 40 * i), vector3df(0, 0, 0), vector3df(8.0, 8.0, 8.0));
-		mpdneon[i+10] = smgr->addVolumeLightSceneNode(0, -1, 32, 32, SColor(128, 255, 150, 0), SColor(128, 255, 150, 0),
-			vector3df(-2745, 475, 5970 + 40 * i), vector3df(0, 0, 0), vector3df(8.0, 8.0, 8.0));
-	}
-	ftoneneon[0] = smgr->addVolumeLightSceneNode(0, -1, 32, 32, SColor(128, 255, 150, 0), SColor(128, 255, 150, 0),
-		vector3df(-2645, 300, 6520), vector3df(0, 0, 0), vector3df(8.0, 8.0, 8.0));
-	fttenneon[0] = smgr->addVolumeLightSceneNode(0, -1, 32, 32, SColor(128, 255, 150, 0), SColor(128, 255, 150, 0),
-		vector3df(-2645, 300, 6770), vector3df(0, 0, 0), vector3df(8.0, 8.0, 8.0));
-	ftsetneon[0] = smgr->addVolumeLightSceneNode(0, -1, 32, 32, SColor(128, 255, 150, 0), SColor(128, 255, 150, 0),
-		vector3df(-2745, 245, 6520), vector3df(0, 0, 0), vector3df(8.0, 8.0, 8.0));
-	ftaddneon[0] = smgr->addVolumeLightSceneNode(0, -1, 32, 32, SColor(128, 255, 150, 0), SColor(128, 255, 150, 0),
-		vector3df(-2745, 245, 6612), vector3df(0, 0, 0), vector3df(8.0, 8.0, 8.0));
-	ftsubneon[0] = smgr->addVolumeLightSceneNode(0, -1, 32, 32, SColor(128, 255, 150, 0), SColor(128, 255, 150, 0),
-		vector3df(-2745, 245, 6640), vector3df(0, 0, 0), vector3df(8.0, 8.0, 8.0));
-	ftringneon[0] = smgr->addVolumeLightSceneNode(0, -1, 32, 32, SColor(128, 255, 150, 0), SColor(128, 255, 150, 0),
-		vector3df(-2645, 245, 6737), vector3df(0, 0, 0), vector3df(8.0, 8.0, 8.0));
-	ftoneneon[1] = smgr->addVolumeLightSceneNode(0, -1, 32, 32, SColor(128, 255, 150, 0), SColor(128, 255, 150, 0),
-		vector3df(2922, 300, 11230), vector3df(0, 0, 0), vector3df(8.0, 8.0, 8.0));
-	fttenneon[1] = smgr->addVolumeLightSceneNode(0, -1, 32, 32, SColor(128, 255, 150, 0), SColor(128, 255, 150, 0),
-		vector3df(2922, 300, 10980), vector3df(0, 0, 0), vector3df(8.0, 8.0, 8.0));
-	ftsetneon[1] = smgr->addVolumeLightSceneNode(0, -1, 32, 32, SColor(128, 255, 150, 0), SColor(128, 255, 150, 0),
-		vector3df(3022, 245, 11230), vector3df(0, 0, 0), vector3df(8.0, 8.0, 8.0));
-	ftaddneon[1] = smgr->addVolumeLightSceneNode(0, -1, 32, 32, SColor(128, 255, 150, 0), SColor(128, 255, 150, 0),
-		vector3df(3022, 245, 11138), vector3df(0, 0, 0), vector3df(8.0, 8.0, 8.0));
-	ftsubneon[1] = smgr->addVolumeLightSceneNode(0, -1, 32, 32, SColor(128, 255, 150, 0), SColor(128, 255, 150, 0),
-		vector3df(3022, 245, 11110), vector3df(0, 0, 0), vector3df(8.0, 8.0, 8.0));
-	ftringneon[1] = smgr->addVolumeLightSceneNode(0, -1, 32, 32, SColor(128, 255, 150, 0), SColor(128, 255, 150, 0),
-		vector3df(2922, 245, 11010), vector3df(0, 0, 0), vector3df(8.0, 8.0, 8.0));
-	ftoneneon[2] = smgr->addVolumeLightSceneNode(0, -1, 32, 32, SColor(128, 255, 150, 0), SColor(128, 255, 150, 0),
-		vector3df(2922, 300, 10010), vector3df(0, 0, 0), vector3df(8.0, 8.0, 8.0));
-	fttenneon[2] = smgr->addVolumeLightSceneNode(0, -1, 32, 32, SColor(128, 255, 150, 0), SColor(128, 255, 150, 0),
-		vector3df(2922, 300, 9760), vector3df(0, 0, 0), vector3df(8.0, 8.0, 8.0));
-	ftsetneon[2] = smgr->addVolumeLightSceneNode(0, -1, 32, 32, SColor(128, 255, 150, 0), SColor(128, 255, 150, 0),
-		vector3df(3022, 245, 10010), vector3df(0, 0, 0), vector3df(8.0, 8.0, 8.0));
-	ftaddneon[2] = smgr->addVolumeLightSceneNode(0, -1, 32, 32, SColor(128, 255, 150, 0), SColor(128, 255, 150, 0),
-		vector3df(3022, 245, 9918), vector3df(0, 0, 0), vector3df(8.0, 8.0, 8.0));
-	ftsubneon[2] = smgr->addVolumeLightSceneNode(0, -1, 32, 32, SColor(128, 255, 150, 0), SColor(128, 255, 150, 0),
-		vector3df(3022, 245, 9890), vector3df(0, 0, 0), vector3df(8.0, 8.0, 8.0));
-	ftringneon[2] = smgr->addVolumeLightSceneNode(0, -1, 32, 32, SColor(128, 255, 150, 0), SColor(128, 255, 150, 0),
-		vector3df(2922, 245, 9790), vector3df(0, 0, 0), vector3df(8.0, 8.0, 8.0));
-	for(i = 0; i < 10; i++) {
-		consneon[i] = smgr->addVolumeLightSceneNode(0, -1, 32, 32, SColor(128, 255, 160, 0), SColor(128, 255, 150, 0),
-			vector3df(3095, 660, 7570 - 49 * i), vector3df(0, 0, 0), vector3df(8.0, 8.0, 8.0));
-		consneon[i+10] = smgr->addVolumeLightSceneNode(0, -1, 32, 32, SColor(128, 255, 160, 0), SColor(128, 255, 150, 0),
-			vector3df(3095, 204, 7570 - 49 * i), vector3df(0, 0, 0), vector3df(8.0, 8.0, 8.0));
-	}
-	mulsneon = smgr->addVolumeLightSceneNode(0, -1, 32, 32, SColor(128, 255, 150, 0), SColor(128, 255, 150, 0),
-		vector3df(-910, 225, 14090), vector3df(0, 0, 0), vector3df(8.0, 8.0, 8.0));
-	mulr1neon = smgr->addVolumeLightSceneNode(0, -1, 32, 32, SColor(128, 255, 150, 0), SColor(128, 255, 150, 0),
-		vector3df(-1400, 230, 14190), vector3df(0, 0, 0), vector3df(8.0, 8.0, 8.0));
-	mulr3neon = smgr->addVolumeLightSceneNode(0, -1, 32, 32, SColor(128, 255, 150, 0), SColor(128, 255, 150, 0),
-		vector3df(-180, 230, 14190), vector3df(0, 0, 0), vector3df(8.0, 8.0, 8.0));
-	dsqplneon = smgr->addVolumeLightSceneNode(0, -1, 32, 32, SColor(128, 255, 150, 0), SColor(128, 255, 150, 0),
-		vector3df(-2720, 190, 8970), vector3df(0, 0, 0), vector3df(8.0, 8.0, 8.0));
-	for(i = 0; i < 10; i++) {
-		dsqstat[i] = smgr->addVolumeLightSceneNode(0, -1, 32, 32, SColor(128, 255, 150, 0), SColor(128, 255, 150, 0),
-			vector3df(-2745, 370, 9080 + i * 21), vector3df(0, 0, 0), vector3df(8.0, 8.0, 8.0));
-		dsqstat[i+10] = smgr->addVolumeLightSceneNode(0, -1, 32, 32, SColor(128, 255, 150, 0), SColor(128, 255, 150, 0),
-			vector3df(-2820, 190, 9010 + i * 45), vector3df(0, 0, 0), vector3df(8.0, 8.0, 8.0));
-		dsqstat[i+20] = smgr->addVolumeLightSceneNode(0, -1, 32, 32, SColor(128, 255, 150, 0), SColor(128, 255, 150, 0),
-			vector3df(-2820, 165, 9010 + i * 45), vector3df(0, 0, 0), vector3df(8.0, 8.0, 8.0));
-	}
+	makeneons();
 
 	glasses = initglasses();
+	initwand();
 
-	leftrtt = driver->addRenderTargetTexture(dimension2d<u32>(1216, 768), "Left");
-	rightrtt = driver->addRenderTargetTexture(dimension2d<u32>(1216, 768), "Right");
+	leftrtt = driver->addRenderTargetTexture(dimension2d<u32>(1216, 768),
+		"Left");
+	rightrtt = driver->addRenderTargetTexture(dimension2d<u32>(1216, 768),
+		"Right");
 
 	leftgl = static_cast<COpenGLTexture*>(leftrtt);
 	rightgl = static_cast<COpenGLTexture*>(rightrtt);
 	lefttex = leftgl->getOpenGLTextureName();
 	righttex = rightgl->getOpenGLTextureName();
 	std::cerr << "left " << lefttex << " right " << righttex << std::endl;
-
-	texarray[0] = 2;
-	texarray[1] = 3;
 
 	std::cout << "ready\n" << std::flush;
 
@@ -623,11 +707,13 @@ main() {
 		if(getpose(&frameinfo)) {
 			frameinfo.leftTexHandle = (void *)lefttex;
 			frameinfo.rightTexHandle = (void *)righttex;
-			driver->setRenderTarget(leftrtt, true, true, SColor(255, 105, 110, 130));
+			driver->setRenderTarget(leftrtt, true, true,
+				SColor(255, 105, 110, 130));
 			smgr->setActiveCamera(camera1);
 			driver->setViewPort(rect<s32>(0, -200, 1216, 768));
 			smgr->drawAll();
-			driver->setRenderTarget(rightrtt, true, true, SColor(255, 105, 110, 130));
+			driver->setRenderTarget(rightrtt, true, true,
+				SColor(255, 105, 110, 130));
 			smgr->setActiveCamera(camera2);
 			driver->setViewPort(rect<s32>(0, -200, 1216, 768));
 			smgr->drawAll();
@@ -644,16 +730,6 @@ main() {
 			std::cerr << "/";
 		}
 
-/*
-		driver->setRenderTarget(0, true, true, SColor(255, 105, 110, 130));
-		smgr->setActiveCamera(camera2);
-		driver->setViewPort(rect<s32>(20, -200, 820, 1050));
-		smgr->drawAll();
-		smgr->setActiveCamera(camera1);
-		driver->setViewPort(rect<s32>(860, -200, 1660, 1050));
-		smgr->drawAll();
-		guienv->drawAll();
-*/
 		driver->endScene();
 		device->yield();
 	}
