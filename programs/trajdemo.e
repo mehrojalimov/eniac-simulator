@@ -719,7 +719,7 @@ s a19.cc5 0
 s a19.rp5 1
 p a19.5o 1-4
 p 6-11 a19.6i
-s s19.op6 0
+s a19.op6 0
 s a19.cc6 0
 s a19.rp6 1
 p a19.6o 3-10
