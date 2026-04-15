@@ -1,0 +1,11 @@
+#!/bin/sh
+xset -r 24
+xset -r 25
+xset -r 26
+xset -r 27
+xset -r 38
+xset -r 39
+xset -r 40
+xset -r 41
+xset r rate 200 25
+

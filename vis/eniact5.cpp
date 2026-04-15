@@ -21,6 +21,9 @@ double tiltx, tilty, tiltz;
 
 ISceneManager *smgr;
 ICursorControl *curs;
+IGUIListBox *menu, *clocklist;
+IGUIListBox *cards;
+int menumode, menusel, nmenu;
 IVolumeLightSceneNode *adneon[20][11];
 IVolumeLightSceneNode *acneon[20][10];
 IVolumeLightSceneNode *cycneon, *cycneon2;
@@ -34,6 +37,8 @@ ICameraSceneNode *camera1, *camera2;
 int laccmpos[9] = { 7725, 8335, 9555, 10165, 10775, 11385, 11995, 12605, 13215 };
 int baccmpos[5] = { -2230, 210, 820, 1430, 2040 };
 int raccmpos[6] = { 13690, 13080, 12470, 11860, 8810, 8200 };
+wchar_t prompts[128][32];
+char progs[128][32];
 
 T5_Glasses
 initglasses() {
@@ -45,7 +50,7 @@ initglasses() {
 	char gbuf[256];
 
 	client.applicationId = "ENIAC";
-	client.applicationVersion = "0.0.1";
+	client.applicationVersion = "0.0.2";
 	client.sdkType = 0;
 	client.reserved = 0;
 	r = t5CreateContext(&t5ctx, &client, 0);
@@ -57,7 +62,7 @@ initglasses() {
 		r = t5ListGlasses(t5ctx, gbuf, &len);
 		if(!r || r != T5_ERROR_NO_SERVICE)
 			break;
-		std::cerr << ".";
+		//std::cerr << ".";
 	}
 	r = t5CreateGlasses(t5ctx, gbuf, &glasses);
 	if(r) {
@@ -96,6 +101,8 @@ procwand(void *a) {
 	T5_Result r;
 	T5_WandStreamEvent event;
 	unsigned long long lasttime;
+	static int butta, buttb, buttx, butty, butt1, butt2, butt3;
+	static int up, down;
 
 	lasttime = 0LL;
 	while(1) {
@@ -119,16 +126,132 @@ procwand(void *a) {
 		case kT5_WandStreamEventType_Report:
 			if(event.report.analogValid) {
 				if(event.report.stick.y > 0.9) {
-					tiltz -= (event.report.timestampNanos - lasttime) * 0.000002;
+					if(menumode) {
+						if(up == 0) {
+							if(menusel > 0) {
+								menusel--;
+								menu->setSelected(menusel);
+							}
+							up = 1;
+						}
+					}
+					else {
+						tiltz -= (event.report.timestampNanos - lasttime)
+							* 0.000002;
+					}
 				}
 				else if(event.report.stick.y < -0.9) {
-					tiltz += (event.report.timestampNanos - lasttime) * 0.000002;
+					if(menumode) {
+						if(down == 0) {
+							if(menusel < nmenu - 1) {
+								menusel++;
+								menu->setSelected(menusel);
+							}
+							down = 1;
+						}
+					}
+					else {
+						tiltz += (event.report.timestampNanos - lasttime)
+							* 0.000002;
+					}
+				}
+				else {
+					up = 0;
+					down = 0;
 				}
 				if(event.report.stick.x > 0.9) {
 					tiltx += (event.report.timestampNanos - lasttime) * 0.000002;
 				}
 				else if(event.report.stick.x < -0.9) {
 					tiltx -= (event.report.timestampNanos - lasttime) * 0.000002;
+				}
+			}
+			if(event.report.buttonsValid) {
+				if(event.report.buttons.a) {
+					if(butta == 0) {
+						std::cout << "b r\n";
+						butta = 1;
+					}
+				}
+				else {
+					butta = 0;
+				}
+				if(event.report.buttons.b) {
+					if(buttb == 0) {
+						std::cout << "b p\n";
+						buttb = 1;
+					}
+				}
+				else {
+					buttb = 0;
+				}
+				if(event.report.buttons.x) {
+					if(buttx == 0) {
+						std::cout << "b c\n";
+						buttx = 1;
+					}
+				}
+				else {
+					buttx = 0;
+				}
+				if(event.report.buttons.y) {
+					if(butty == 0) {
+						std::cout << "b i\n";
+						butty = 1;
+					}
+				}
+				else {
+					butty = 0;
+				}
+				if(event.report.buttons.one) {
+					if(butt1 == 0) {
+						if(menumode == 1) {
+							menu->setVisible(false);
+							menumode = 0;
+						}
+						else if(menumode == 0) {
+							menu->setSelected(0);
+							menusel = 0;
+							menu->setVisible(true);
+							menumode = 1;
+						}
+						butt1 = 1;
+					}
+				}
+				else {
+					butt1 = 0;
+				}
+				if(event.report.buttons.two) {
+					if(butt2 == 0) {
+						if(menumode == 2) {
+							clocklist->setVisible(false);
+							menumode = 0;
+						}
+						else if(menumode == 0) {
+							clocklist->setSelected(0);
+							menusel = 0;
+							clocklist->setVisible(true);
+							menumode = 2;
+						}
+						butt2 = 1;
+					}
+				}
+				else {
+					butt2 = 0;
+				}
+				if(event.report.buttons.three) {
+					if(butt3 == 0) {
+						if(menumode) {
+							std::cout << "R\n";
+							std::cout << "l " << progs[menusel] << "\n";
+							menumode = 0;
+							menu->setVisible(false);
+						}
+						butt3 = 1;
+					}
+				}
+				else {
+					butt3 = 0;
 				}
 			}
 			break;
@@ -258,6 +381,54 @@ setcams(vector3df pos, double angle) {
 	camera2->updateAbsolutePosition();
 }
 
+void
+makemenu(IGUIEnvironment *guienv) {
+	FILE *idx;
+	IGUIFont *font;
+	char rprompt[128][32];
+	int i;
+	char *p;
+	wchar_t *q;
+
+	idx = std::fopen("programs/index", "r");
+	if(idx == NULL)
+		return;
+	nmenu = 0;
+	while(1) {
+		if(std::fscanf(idx, " %[^$]$%s", rprompt[nmenu], progs[nmenu]) < 2)
+			break;
+		p = rprompt[nmenu];
+		q = prompts[nmenu];
+		while(1) {
+			*q = *p;
+			if(*p == '\0')
+				break;
+			q++;
+			p++;
+		}
+		nmenu++;
+	}
+	std::fclose(idx);
+	font = guienv->getFont("vis/DejaVuSansMono.png");
+	if(!font)
+		std::cerr << "Cannot load font\n";
+	else {
+		guienv->getSkin()->setFont(font, EGDF_DEFAULT);
+	}
+	clocklist = guienv->addListBox(rect<s32>(500, 50, 800, 140), NULL, 1, true);
+	clocklist->setItemHeight(30);
+	clocklist->addItem(L"Continuous");
+	clocklist->addItem(L"1 Add");
+	clocklist->addItem(L"1 Pulse");
+	clocklist->setVisible(false);
+	menu = guienv->addListBox(rect<s32>(500, 50, 830, 50 + 30 * nmenu),
+		NULL, 1, true);
+	menu->setItemHeight(30);
+	for(i = 0; i < nmenu; i++)
+		menu->addItem(prompts[i]);
+	menu->setVisible(false);
+	cards = guienv->addListBox(rect<s32>(850, 900, 1680, 1050), NULL, 1, true);
+}
 
 class MyReceiver : public IEventReceiver {
 public:
@@ -277,16 +448,44 @@ public:
 		else if(event.EventType == EET_KEY_INPUT_EVENT) {
 			if(!event.KeyInput.PressedDown)
 				return false;
-			else if(event.KeyInput.Key == KEY_UP) {
-				campos += forward * 40;
-				setcams(campos, angle);
+			else if(event.KeyInput.Key == KEY_UP || event.KeyInput.Char == 'u') {
+				if(menumode == 1) {
+					if(menusel > 0) {
+						menusel--;
+						menu->setSelected(menusel);
+					}
+				}
+				else if(menumode == 2) {
+					if(menusel > 0) {
+						menusel--;
+						clocklist->setSelected(menusel);
+					}
+				}
+				else {
+					campos += forward * 50;
+					setcams(campos, angle);
+				}
 			}
-			else if(event.KeyInput.Key == KEY_DOWN) {
-				campos -= forward * 40;
-				setcams(campos, angle);
+			else if(event.KeyInput.Key == KEY_DOWN || event.KeyInput.Char == 'i') {
+				if(menumode == 1) {
+					if(menusel < nmenu - 1) {
+						menusel++;
+						menu->setSelected(menusel);
+					}
+				}
+				else if(menumode == 2) {
+					if(menusel < 2) {
+						menusel++;
+						clocklist->setSelected(menusel);
+					}
+				}
+				else {
+					campos -= forward * 50;
+					setcams(campos, angle);
+				}
 			}
-			else if(event.KeyInput.Key == KEY_LEFT) {
-				angle -= 0.015;
+			else if(event.KeyInput.Key == KEY_LEFT || event.KeyInput.Char == 'y') {
+				angle -= 0.02;
 				target = vector3df(20000.0 * sin(angle), 0.0,
 					20000.0 * cos(angle));
 				forward = (target - campos).normalize();
@@ -294,14 +493,73 @@ public:
 				camera2->setTarget(target);
 				setcams(campos, angle);
 			}
-			else if(event.KeyInput.Key == KEY_RIGHT) {
-				angle += 0.015;
+			else if(event.KeyInput.Key == KEY_RIGHT || event.KeyInput.Char == 'o') {
+				angle += 0.02;
 				target = vector3df(20000.0 * sin(angle), 0.0,
 					20000.0 * cos(angle));
 				forward = (target - campos).normalize();
 				camera1->setTarget(target);
 				camera2->setTarget(target);
 				setcams(campos, angle);
+			}
+			else if(event.KeyInput.Char == 'L' || event.KeyInput.Char == 'q') {
+				if(menumode == 1) {
+					std::cout << "R\n" << std::flush;
+					std::cout << "l " << progs[menusel] << "\n" << std::flush;
+					menumode = 0;
+					menu->setVisible(false);
+				}
+				else if(menumode == 2) {
+					switch(menusel) {
+					case 0:
+						std::cout << "s cy.op co\n" << std::flush;
+						break;
+					case 1:
+						std::cout << "s cy.op 1a\n" << std::flush;
+						break;
+					case 2:
+						std::cout << "s cy.op 1p\n" << std::flush;
+						break;
+					}
+					menumode = 0;
+					clocklist->setVisible(false);
+				}
+			}
+			else if(event.KeyInput.Char == 'M' || event.KeyInput.Char == 'w') {
+				if(menumode == 1) {
+					menu->setVisible(false);
+					menumode = 0;
+				}
+				else if(menumode == 0) {
+					menu->setSelected(0);
+					menusel = 0;
+					menu->setVisible(true);
+					menumode = 1;
+				}
+			}
+			else if(event.KeyInput.Char == 'C' || event.KeyInput.Char == 'r') {
+				if(menumode == 2) {
+					clocklist->setVisible(false);
+					menumode = 0;
+				}
+				else if(menumode == 0) {
+					clocklist->setSelected(0);
+					menusel = 0;
+					clocklist->setVisible(true);
+					menumode = 2;
+				}
+			}
+			else if(event.KeyInput.Char == 'd') {
+				std::cout << "b c\n" << std::flush;
+			}
+			else if(event.KeyInput.Char == 'f') {
+				std::cout << "b r\n" << std::flush;
+			}
+			else if(event.KeyInput.Char == 'a') {
+				std::cout << "b i\n" << std::flush;
+			}
+			else if(event.KeyInput.Char == 's') {
+				std::cout << "b p\n" << std::flush;
 			}
 			else if(event.KeyInput.Char == 'Q')
 				exit(0);
@@ -334,6 +592,9 @@ stdinreader(void *a) {
 	int ms, mr1, mr3;
 	float xpos, ystart, dir;
 	char dstat[32];
+	const char *cols;
+	wchar_t card[81];
+	int i;
 
 	while(1) {
 		std::getline(std::cin, msg);
@@ -529,6 +790,13 @@ stdinreader(void *a) {
 			mvdsqstat(28, dstat, -2820, 165, 9370);
 			mvdsqstat(29, dstat, -2820, 165, 9415);
 		}
+		else if(strncmp(msg.c_str(), "punch ", 6) == 0) {
+			cols = msg.c_str() + 6;
+			for(i = 0; i < 80; i++)
+				card[i] = cols[i];
+			i = cards->addItem(card);
+			cards->setSelected(i);
+		}
 	}
 }
 
@@ -636,6 +904,7 @@ main() {
 	guienv = device->getGUIEnvironment();
 	curs = device->getCursorControl();
 	curs->setVisible(false);
+	makemenu(guienv);
 
 	mesh = smgr->getMesh("obj/eniact.obj");
 	if(mesh == NULL) {
@@ -712,11 +981,19 @@ main() {
 			smgr->setActiveCamera(camera1);
 			driver->setViewPort(rect<s32>(0, -200, 1216, 768));
 			smgr->drawAll();
+			menu->setRelativePosition(rect<s32>(515, 50, 845, 50 + 30 * nmenu));
+			clocklist->setRelativePosition(rect<s32>(515, 50, 830, 140));
+			cards->setRelativePosition(rect<s32>(400, 400, 1200, 550));
+			guienv->drawAll();
 			driver->setRenderTarget(rightrtt, true, true,
 				SColor(255, 105, 110, 130));
 			smgr->setActiveCamera(camera2);
 			driver->setViewPort(rect<s32>(0, -200, 1216, 768));
 			smgr->drawAll();
+			menu->setRelativePosition(rect<s32>(500, 50, 830, 50 + 30 * nmenu));
+			clocklist->setRelativePosition(rect<s32>(500, 50, 800, 140));
+			cards->setRelativePosition(rect<s32>(350, 400, 1150, 550));
+			guienv->drawAll();
 
 			r = t5SendFrameToGlasses(glasses, &frameinfo);
 			if(r) {
@@ -726,8 +1003,9 @@ main() {
 			driver->setRenderTarget(0, true, true, SColor(255, 105, 110, 130));
 			driver->setViewPort(rect<s32>(0, 0, 1216, 768));
 			smgr->drawAll();
+			guienv->drawAll();
 
-			std::cerr << "/";
+			//std::cerr << "/";
 		}
 
 		driver->endScene();
