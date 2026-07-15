@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ENIAC Simulator</title>
+<link rel="icon" href="data:,">
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<header id="controls">
+  <div class="control-group">
+    <label>Program
+      <select id="program-select"></select>
+    </label>
+    <button id="connect-btn">Start New Session</button>
+    <span id="status" class="status-disconnected">disconnected</span>
+  </div>
+  <div class="control-group">
+    <button data-cmd="R" class="danger">RESET</button>
+    <button data-cmd="b c">CLEAR</button>
+    <button data-cmd="b r">READ</button>
+    <button data-cmd="b i">INIT</button>
+    <button data-cmd="b p">PULSE</button>
+  </div>
+  <div class="control-group">
+    <span class="group-label">Cycling:</span>
+    <button data-cmd="s cy.op co">Co</button>
+    <button data-cmd="s cy.op 1p">1P</button>
+    <button data-cmd="s cy.op 1a">1A</button>
+  </div>
+  <div class="control-group readout">
+    <span id="cycle-readout">cycle: - &nbsp; mode: -</span>
+    <a href="/3d.html" style="color:inherit;margin-left:12px;">3D Walkthrough &rarr;</a>
+  </div>
+</header>
+
+<main>
+  <div class="panorama-scroll">
+    <div id="panorama">
+      <img class="section-bg" src="/static/s1.jpg" style="left:0px" alt="ENIAC section 1">
+      <img class="section-bg" src="/static/s2.jpg" style="left:1900px" alt="ENIAC section 2">
+      <img class="section-bg" src="/static/s3.jpg" style="left:3800px" alt="ENIAC section 3">
+      <img class="section-bg" src="/static/s4.jpg" style="left:5700px" alt="ENIAC section 4">
+      <img class="section-bg" src="/static/s5.jpg" style="left:7600px" alt="ENIAC section 5">
+    </div>
+  </div>
+
+  <section id="punchlog-wrap">
+    <h3>Punch / Printer Output</h3>
+    <pre id="punchlog"></pre>
+  </section>
+</main>
+
+<script src="/app.js"></script>
+</body>
+</html>

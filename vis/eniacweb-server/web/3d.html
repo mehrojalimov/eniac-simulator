@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ENIAC Simulator - 3D Walkthrough</title>
+<link rel="icon" href="data:,">
+<link rel="stylesheet" href="/3d.css">
+<script type="importmap">
+{
+  "imports": {
+    "three": "/vendor/three/three.module.js"
+  }
+}
+</script>
+</head>
+<body>
+<header id="hud">
+  <div class="control-group">
+    <a id="back-link" href="/index.html" title="Back to 2D panel">&larr;</a>
+    <select id="program-select"></select>
+    <button id="connect-btn">Start Session</button>
+    <span id="status" class="status-disconnected">disconnected</span>
+  </div>
+  <div class="control-group">
+    <button data-cmd="R" class="danger">RESET</button>
+    <button data-cmd="b c">CLEAR</button>
+    <button data-cmd="b r">READ</button>
+    <button data-cmd="b i">INIT</button>
+    <button data-cmd="b p">PULSE</button>
+  </div>
+  <div class="control-group">
+    <span class="group-label">Cycling:</span>
+    <button data-cmd="s cy.op co">Co</button>
+    <button data-cmd="s cy.op 1p">1P</button>
+    <button data-cmd="s cy.op 1a">1A</button>
+  </div>
+  <div class="control-group hint">
+    Drag to look &middot; WASD / arrows to walk
+  </div>
+</header>
+
+<div id="punchlog-wrap">
+  <h3>Punch / Printer Output</h3>
+  <pre id="punchlog"></pre>
+</div>
+
+<script type="module" src="/3d.js"></script>
+</body>
+</html>

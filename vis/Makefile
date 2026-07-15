@@ -27,6 +27,12 @@ eniacrlfp.o: eniacrlfp.c
 eniactk: eniactk.go
 	go build -o eniactk eniactk.go
 
+eniacweb-adapter: eniacweb-adapter/main.go
+	go build -o eniacweb-adapter/eniacweb-adapter eniacweb-adapter/main.go
+
+eniacweb-server: eniacweb-server/main.go eniacweb-server/session.go
+	go build -o eniacweb-server/eniacweb-server ./eniacweb-server
+
 irrtest: irrtest.o
 	g++ $(C++_FLAGS) -o irrtest irrtest.o -lIrrlicht
 
